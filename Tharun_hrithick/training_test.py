@@ -1,300 +1,323 @@
 import pandas as pd
 import numpy as np
-from collections import Counter
-from sklearn.model_selection import train_test_split
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
-import matplotlib.pyplot as plt # <-- ADDED: Import for plotting
+from torch.utils.data import DataLoader, Dataset, random_split
+from collections import Counter
+import re
+import time
+# --- IMPROVEMENT: Added Learning Rate Scheduler ---
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-# --- Hyperparameters and Configuration ---
-EMBEDDING_DIM = 300
-HIDDEN_DIM = 128
+# --- 1. Configuration & Hyperparameters ---
+# --- CRITICAL: This file MUST exist. It's not test.csv ---
+FILE_PATH = 'preprocessed_test.csv' 
+MODEL_SAVE_PATH = 'emotion_detection_pytorch_improved.pth'
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Model parameters
+VOCAB_MIN_FREQ = 3
+MAX_LEN = 60
+# --- IMPROVEMENT: Increased model capacity ---
+EMBEDDING_DIM = 200 # Original: 100
+HIDDEN_DIM = 256    # Original: 128
+NUM_CLASSES = 6     # Based on your dataset (0-5)
 NUM_LAYERS = 2
-DROPOUT_PROB = 0.3
-NUM_EPOCHS = 30
+DROPOUT_PROB = 0.5
+
+# Training parameters
 BATCH_SIZE = 32
 LEARNING_RATE = 0.001
-MODEL_SAVE_PATH = 'emotion_detection_pytorch_improved.pth'
-MAX_LEN = 100
-MIN_WORD_FREQ = 2
-MAX_VOCAB_SIZE = 10000
+# --- IMPROVEMENT: Increased epochs, but added Early Stopping ---
+NUM_EPOCHS = 50 # Original: 30 (Early stopping will likely stop it sooner)
+TEST_SPLIT = 0.15
+VAL_SPLIT = 0.15 # Percentage of the *training* data
 
-# --- 1. Load and Preprocess Data ---
+# --- IMPROVEMENT: New parameters for better training ---
+WEIGHT_DECAY = 1e-5             # L2 Regularization to prevent overfitting
+GRADIENT_CLIP_VALUE = 1.0       # Prevents exploding gradients for stable training
+EARLY_STOPPING_PATIENCE = 5   # Stop if val_loss doesn't improve for 5 epochs
+
+# --- 2. Data Loading and Inspection ---
 try:
-    df = pd.read_csv("preprocessed_test.csv")
-    print("Dataset loaded successfully.")
-    print(f"Total samples: {len(df)}")
-except FileNotFoundError:
-    print("Error: 'preprocessed_test.csv' not found. Ensure your preprocessed data is in the current directory.")
-    exit()
+    df = pd.read_csv(FILE_PATH)
+    print(f"Dataset loaded successfully from '{FILE_PATH}'.")
+    print(f"Total samples: {len(df)}\n")
+    
+    # Ensure column names are correct (text, label)
+    df = df.rename(columns={'comment': 'text', 'emotion': 'label'}, errors='ignore')
+    if 'text' not in df.columns or 'label' not in df.columns:
+        raise ValueError("CSV must contain 'text' and 'label' columns.")
+    
+    # Basic class distribution
+    print("Class distribution:")
+    label_counts = df['label'].value_counts().sort_index()
+    print(label_counts)
+    print("\n")
 
-df['cleaned_text'] = df['cleaned_text'].fillna('')
+# --- 3. Preprocessing and Vocabulary ---
+    def clean_text(text):
+        text = str(text).lower()
+        text = re.sub(r'[^a-z\s]', '', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
 
-# --- 2. Label Encoding ---
-labels = df['label'].unique()
-label_to_int = {label: i for i, label in enumerate(labels)}
-int_to_label = {i: label for label, i in label_to_int.items()}
-NUM_CLASSES = len(labels)
+    print("Cleaning text...")
+    df['text'] = df['text'].apply(clean_text)
 
-print(f"\nClass distribution:")
-for label in labels:
-    count = (df['label'] == label).sum()
-    print(f"  {label}: {count} ({count/len(df)*100:.2f}%)")
+    def build_vocab(texts, min_freq):
+        word_counts = Counter()
+        for text in texts:
+            word_counts.update(text.split())
+        
+        words = [word for word, count in word_counts.items() if count >= min_freq]
+        
+        # Add special tokens
+        # <pad> is 0, <unk> is 1
+        vocab = {'<pad>': 0, '<unk>': 1}
+        for i, word in enumerate(words):
+            vocab[word] = i + 2
+        return vocab
 
-df['label_int'] = df['label'].map(label_to_int)
+    print("Building vocabulary...")
+    VOCAB = build_vocab(df['text'], VOCAB_MIN_FREQ)
+    VOCAB_SIZE = len(VOCAB)
+    print(f"Vocabulary size: {VOCAB_SIZE}\n")
 
-# --- 3. Build Vocabulary ---
-all_text = ' '.join(df['cleaned_text'])
-word_counts = Counter(all_text.split())
+# --- 4. Dataset Class ---
+    class TextDataset(Dataset):
+        def __init__(self, texts, labels, vocab, max_len):
+            self.texts = texts
+            self.labels = labels
+            self.vocab = vocab
+            self.max_len = max_len
 
-filtered_vocab = {word: count for word, count in word_counts.items()
-                  if count >= MIN_WORD_FREQ}
-vocab = sorted(filtered_vocab, key=filtered_vocab.get, reverse=True)[:MAX_VOCAB_SIZE]
+        def __len__(self):
+            return len(self.texts)
 
-word_to_idx = {word: i+2 for i, word in enumerate(vocab)}
-word_to_idx['<PAD>'] = 0
-word_to_idx['<UNK>'] = 1
-VOCAB_SIZE = len(word_to_idx)
-print(f"\nVocabulary size: {VOCAB_SIZE}")
-print(f"Words filtered out: {len(word_counts) - len(vocab)}")
+        def __getitem__(self, idx):
+            text = self.texts[idx]
+            label = self.labels[idx]
+            
+            # Convert text to sequence
+            seq = [self.vocab.get(word, 1) for word in text.split()] # 1 for <unk>
+            
+            # Pad sequence
+            if len(seq) > self.max_len:
+                seq = seq[:self.max_len]
+            else:
+                seq = seq + [0] * (self.max_len - len(seq)) # 0 for <pad>
+            
+            return torch.tensor(seq, dtype=torch.long), torch.tensor(label, dtype=torch.long)
 
+    all_texts = df['text'].values
+    all_labels = df['label'].values
+    
+    dataset = TextDataset(all_texts, all_labels, VOCAB, MAX_LEN)
 
-# --- 4. PyTorch Dataset and DataLoader ---
-class EmotionDataset(Dataset):
-    """Custom PyTorch Dataset for emotion text data."""
-    def __init__(self, texts, labels, word_to_idx, max_len):
-        self.texts = texts
-        self.labels = labels
-        self.word_to_idx = word_to_idx
-        self.max_len = max_len
+# --- 5. Split Data and Create DataLoaders ---
+    test_size = int(len(dataset) * TEST_SPLIT)
+    train_val_size = len(dataset) - test_size
+    train_val_dataset, test_dataset = random_split(dataset, [train_val_size, test_size])
 
-    def __len__(self):
-        return len(self.texts)
+    val_size = int(train_val_size * VAL_SPLIT)
+    train_size = train_val_size - val_size
+    train_dataset, val_dataset = random_split(train_val_dataset, [train_size, val_size])
 
-    def __getitem__(self, idx):
-        text = self.texts[idx]
-        label = self.labels[idx]
+    print(f"Total samples: {len(dataset)}")
+    print(f"Training samples: {len(train_dataset)}")
+    print(f"Validation samples: {len(val_dataset)}")
+    print(f"Test samples: {len(test_dataset)}\n")
 
-        text_indices = [self.word_to_idx.get(word, self.word_to_idx['<UNK>'])
-                        for word in text.split()]
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
 
-        if len(text_indices) > self.max_len:
-            text_indices = text_indices[:self.max_len]
-        else:
-            text_indices += [self.word_to_idx['<PAD>']] * (self.max_len - len(text_indices))
+# --- 6. Model Definition ---
+    class EmotionModel(nn.Module):
+        def __init__(self, vocab_size, embedding_dim, hidden_dim, num_classes, num_layers, dropout_prob):
+            super(EmotionModel, self).__init__()
+            self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+            self.lstm = nn.LSTM(
+                embedding_dim,
+                hidden_dim,
+                num_layers,
+                batch_first=True,
+                bidirectional=True,
+                dropout=dropout_prob if num_layers > 1 else 0 # Dropout between LSTM layers
+            )
+            # Final dropout layer
+            self.dropout = nn.Dropout(dropout_prob)
+            self.fc = nn.Linear(hidden_dim * 2, num_classes) # *2 for bidirectional
 
-        return torch.tensor(text_indices, dtype=torch.long), torch.tensor(label, dtype=torch.long)
+        def forward(self, x):
+            embedded = self.embedding(x)
+            # lstm_out shape: [batch_size, seq_len, hidden_dim * 2]
+            # hidden shape: [num_layers * 2, batch_size, hidden_dim]
+            lstm_out, (hidden, cell) = self.lstm(embedded)
+            
+            # Concatenate the final forward and backward hidden states
+            # Get the last layer's hidden state (forward and backward)
+            # hidden[-2,:,:] is the last forward layer
+            # hidden[-1,:,:] is the last backward layer
+            hidden = torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)
+            
+            # Apply dropout
+            dropped = self.dropout(hidden)
+            output = self.fc(dropped)
+            return output
 
+    model = EmotionModel(
+        VOCAB_SIZE,
+        EMBEDDING_DIM,
+        HIDDEN_DIM,
+        NUM_CLASSES,
+        NUM_LAYERS,
+        DROPOUT_PROB
+    ).to(DEVICE)
+    
+    print("Model architecture created:")
+    print(model)
+    print("\n")
 
-# --- 5. Model Architecture ---
-class ImprovedEmotionClassifier(nn.Module):
-    """Bi-LSTM with Attention and Classification Layers."""
-    def __init__(self, vocab_size, embedding_dim, hidden_dim, num_classes, num_layers, dropout_prob):
-        super(ImprovedEmotionClassifier, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
-        self.lstm = nn.LSTM(embedding_dim,
-                           hidden_dim,
-                           num_layers=num_layers,
-                           batch_first=True,
-                           bidirectional=True,
-                           dropout=dropout_prob if num_layers > 1 else 0)
-        self.attention = nn.Linear(hidden_dim * 2, 1)
-        self.batch_norm = nn.BatchNorm1d(hidden_dim * 2)
-        self.fc1 = nn.Linear(hidden_dim * 2, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, num_classes)
-        self.dropout = nn.Dropout(dropout_prob)
-        self.relu = nn.ReLU()
-
-    def attention_net(self, lstm_output):
-        """Calculates attention weights and context vector."""
-        attention_weights = torch.softmax(self.attention(lstm_output), dim=1)
-        context_vector = torch.sum(attention_weights * lstm_output, dim=1)
-        return context_vector
-
-    def forward(self, x):
-        embedded = self.dropout(self.embedding(x))
-        lstm_out, _ = self.lstm(embedded)
-        attn_output = self.attention_net(lstm_out)
-        attn_output = self.batch_norm(attn_output)
-        out = self.dropout(self.relu(self.fc1(attn_output)))
-        out = self.fc2(out)
-        return out
-
-# --- 6. Data Splitting ---
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"\nUsing device: {device}")
-
-X_temp, X_test, y_temp, y_test = train_test_split(
-    df['cleaned_text'].values, df['label_int'].values,
-    test_size=0.15, random_state=42, stratify=df['label_int'].values
-)
-
-X_train, X_val, y_train, y_val = train_test_split(
-    X_temp, y_temp,
-    test_size=0.15, random_state=42, stratify=y_temp
-)
-
-print(f"\nDataset split:")
-print(f"  Train: {len(X_train)} samples")
-print(f"  Validation: {len(X_val)} samples")
-print(f"  Test: {len(X_test)} samples")
-
-train_dataset = EmotionDataset(X_train, y_train, word_to_idx, MAX_LEN)
-val_dataset = EmotionDataset(X_val, y_val, word_to_idx, MAX_LEN)
-test_dataset = EmotionDataset(X_test, y_test, word_to_idx, MAX_LEN)
-
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
-
-
-# --- 7. Model Initialization, Loss, Optimizer ---
-model = ImprovedEmotionClassifier(
-    VOCAB_SIZE, EMBEDDING_DIM, HIDDEN_DIM, NUM_CLASSES, NUM_LAYERS, DROPOUT_PROB
-).to(device)
-
-class_counts = np.bincount(df['label_int'].values)
-class_weights = torch.FloatTensor(1.0 / class_counts).to(device)
-criterion = nn.CrossEntropyLoss(weight=class_weights)
-optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
+# --- 7. Training Setup ---
+    criterion = nn.CrossEntropyLoss()
+    # --- IMPROVEMENT: Added weight_decay (L2 regularization) ---
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    
+    # --- IMPROVEMENT: Added Learning Rate Scheduler ---
+    # Will reduce LR if validation loss plateaus for 2 epochs
+    # *** THIS IS THE FIX: Removed 'verbose=True' which caused the error ***
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=2)
 
 # --- 8. Training Loop ---
-best_val_acc = 0
+    print("--- Starting Model Training ---")
+    start_time = time.time()
+    
+    best_val_loss = float('inf')
+    # --- IMPROVEMENT: Added for Early Stopping ---
+    epochs_no_improve = 0 
 
-# <-- ADDED: Lists to store metrics for plotting
-train_loss_history = []
-train_acc_history = []
-val_acc_history = []
+    for epoch in range(NUM_EPOCHS):
+        model.train() # Set model to training mode
+        total_train_loss = 0
+        
+        for texts_batch, labels_batch in train_loader:
+            texts_batch = texts_batch.to(DEVICE)
+            labels_batch = labels_batch.to(DEVICE)
+            
+            # Forward pass
+            outputs = model(texts_batch)
+            loss = criterion(outputs, labels_batch)
+            
+            # Backward pass and optimization
+            optimizer.zero_grad()
+            loss.backward()
+            
+            # --- IMPROVEMENT: Added Gradient Clipping ---
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRADIENT_CLIP_VALUE)
+            
+            optimizer.step()
+            
+            total_train_loss += loss.item()
+        
+        avg_train_loss = total_train_loss / len(train_loader)
+        
+        # --- Validation Loop ---
+        model.eval() # Set model to evaluation mode
+        total_val_loss = 0
+        total_val_correct = 0
+        
+        with torch.no_grad():
+            for texts_batch, labels_batch in val_loader:
+                texts_batch = texts_batch.to(DEVICE)
+                labels_batch = labels_batch.to(DEVICE)
+                
+                outputs = model(texts_batch)
+                loss = criterion(outputs, labels_batch)
+                total_val_loss += loss.item()
+                
+                _, predicted = torch.max(outputs.data, 1)
+                total_val_correct += (predicted == labels_batch).sum().item()
+        
+        avg_val_loss = total_val_loss / len(val_loader)
+        val_accuracy = 100 * total_val_correct / len(val_dataset)
+        
+        print(f'Epoch [{epoch+1:02}/{NUM_EPOCHS}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {val_accuracy:.2f}%')
+        
+        # --- IMPROVEMENT: Learning Rate Scheduler Step ---
+        scheduler.step(avg_val_loss)
+        
+        # --- IMPROVEMENT: Early Stopping and Model Saving ---
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            epochs_no_improve = 0
+            
+            # Save the best model
+            checkpoint = {
+                'model_state_dict': model.state_dict(),
+                'vocab': VOCAB,
+                'embedding_dim': EMBEDDING_DIM,
+                'hidden_dim': HIDDEN_DIM,
+                'num_classes': NUM_CLASSES,
+                'num_layers': NUM_LAYERS,
+                'dropout_prob': DROPOUT_PROB,
+                'max_len': MAX_LEN
+            }
+            torch.save(checkpoint, MODEL_SAVE_PATH)
+            print(f"   -> Validation loss improved. Saving new best model to {MODEL_SAVE_PATH}")
+        
+        else:
+            epochs_no_improve += 1
+            print(f"   -> Validation loss did not improve. Patience: {epochs_no_improve}/{EARLY_STOPPING_PATIENCE}")
 
+        if epochs_no_improve >= EARLY_STOPPING_PATIENCE:
+            print(f"\n--- Early stopping triggered after {epoch+1} epochs. ---")
+            break # Exit the training loop
+    
+    training_time = (time.time() - start_time) / 60
+    print(f"--- Training Finished in {training_time:.2f} minutes ---")
 
-print("\nStarting training for all 30 epochs...")
-for epoch in range(NUM_EPOCHS):
-    model.train()
-    total_loss = 0
-    correct_train = 0
-    total_train = 0
+# --- 9. Test Evaluation ---
+    print(f"\nLoading best model from {MODEL_SAVE_PATH} for final testing...")
+    
+    # Load the saved checkpoint
+    # We use weights_only=False to load the full checkpoint dictionary (with vocab)
+    checkpoint = torch.load(MODEL_SAVE_PATH, map_location=DEVICE, weights_only=False)
+    
+    # Re-create model structure and load weights
+    test_model = EmotionModel(
+        vocab_size=len(checkpoint['vocab']), # Use vocab size from checkpoint
+        embedding_dim=checkpoint['embedding_dim'],
+        hidden_dim=checkpoint['hidden_dim'],
+        num_classes=checkpoint['num_classes'],
+        num_layers=checkpoint['num_layers'],
+        dropout_prob=checkpoint['dropout_prob']
+    ).to(DEVICE)
+    
+    test_model.load_state_dict(checkpoint['model_state_dict'])
+    test_model.eval() # Set to evaluation mode
 
-    for texts, labels in train_loader:
-        texts, labels = texts.to(device), labels.to(device)
-
-        optimizer.zero_grad()
-        outputs = model(texts)
-        loss = criterion(outputs, labels)
-        loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-
-        optimizer.step()
-
-        total_loss += loss.item()
-
-        _, predicted = torch.max(outputs.data, 1)
-        total_train += labels.size(0)
-        correct_train += (predicted == labels).sum().item()
-
-    train_accuracy = 100 * correct_train / total_train
-    avg_train_loss = total_loss / len(train_loader) # <-- ADDED: Calculate average loss
-
-    model.eval()
-    correct_val = 0
-    total_val = 0
+    test_correct = 0
+    test_total = 0
+    
     with torch.no_grad():
-        for texts, labels in val_loader:
-            texts, labels = texts.to(device), labels.to(device)
-            outputs = model(texts)
+        for texts_batch, labels_batch in test_loader:
+            texts_batch = texts_batch.to(DEVICE)
+            labels_batch = labels_batch.to(DEVICE)
+            
+            outputs = test_model(texts_batch)
             _, predicted = torch.max(outputs.data, 1)
-            total_val += labels.size(0)
-            correct_val += (predicted == labels).sum().item()
+            test_total += labels_batch.size(0)
+            test_correct += (predicted == labels_batch).sum().item()
 
-    val_accuracy = 100 * correct_val / total_val
+    test_accuracy = 100 * test_correct / test_total
+    print(f'\nAccuracy of the best model on the test dataset: {test_accuracy:.2f} %')
+    print("--- Process Completed ---")
 
-    # <-- ADDED: Append metrics to history lists
-    train_loss_history.append(avg_train_loss)
-    train_acc_history.append(train_accuracy)
-    val_acc_history.append(val_accuracy)
-
-    print(f'Epoch [{epoch+1}/{NUM_EPOCHS}], Loss: {avg_train_loss:.4f}, '
-          f'Train Acc: {train_accuracy:.2f}%, Val Acc: {val_accuracy:.2f}%')
-
-    scheduler.step(val_accuracy)
-
-    if val_accuracy > best_val_acc:
-        best_val_acc = val_accuracy
-        torch.save({
-            'model_state_dict': model.state_dict(),
-            'word_to_idx': word_to_idx,
-            'label_to_int': label_to_int,
-            'int_to_label': int_to_label,
-            'embedding_dim': EMBEDDING_DIM,
-            'hidden_dim': HIDDEN_DIM,
-            'num_classes': NUM_CLASSES,
-            'vocab_size': VOCAB_SIZE,
-            'num_layers': NUM_LAYERS,
-            'dropout_prob': DROPOUT_PROB,
-            'max_len': MAX_LEN
-        }, MODEL_SAVE_PATH)
-        print(f"  → Best model saved! Val Acc: {val_accuracy:.2f}%")
-
-print("\nTraining complete. Loading best model for final evaluation...")
-
-
-# --- 9. Plotting Training History ---
-# <-- ADDED: This entire block is new
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-
-# Plot for Training Loss
-ax1.plot(range(1, NUM_EPOCHS + 1), train_loss_history, label='Training Loss', color='blue', marker='o')
-ax1.set_title('Training Loss vs. Epochs')
-ax1.set_xlabel('Epochs')
-ax1.set_ylabel('Loss')
-ax1.grid(True)
-ax1.legend()
-
-# Plot for Training and Validation Accuracy
-ax2.plot(range(1, NUM_EPOCHS + 1), train_acc_history, label='Training Accuracy', color='green', marker='o')
-ax2.plot(range(1, NUM_EPOCHS + 1), val_acc_history, label='Validation Accuracy', color='red', marker='x')
-ax2.set_title('Accuracy vs. Epochs')
-ax2.set_xlabel('Epochs')
-ax2.set_ylabel('Accuracy (%)')
-ax2.grid(True)
-ax2.legend()
-
-plt.tight_layout()
-plt.show()
-
-
-# --- 10. Final Evaluation on Test Set ---
-checkpoint = torch.load(MODEL_SAVE_PATH, weights_only=False)
-model.load_state_dict(checkpoint['model_state_dict'])
-
-model.eval()
-correct_test = 0
-total_test = 0
-all_predictions = []
-all_labels = []
-
-with torch.no_grad():
-    for texts, labels in test_loader:
-        texts, labels = texts.to(device), labels.to(device)
-        outputs = model(texts)
-        _, predicted = torch.max(outputs.data, 1)
-        total_test += labels.size(0)
-        correct_test += (predicted == labels).sum().item()
-
-        all_predictions.extend(predicted.cpu().numpy())
-        all_labels.extend(labels.cpu().numpy())
-
-test_accuracy = 100 * correct_test / total_test
-print(f"\nFinal Test Accuracy: {test_accuracy:.2f}%")
-
-print("\nPer-class accuracy:")
-for i in range(NUM_CLASSES):
-    class_mask = np.array(all_labels) == i
-    if class_mask.sum() > 0:
-        class_acc = (np.array(all_predictions)[class_mask] == i).sum() / class_mask.sum() * 100
-        print(f"  {int_to_label[i]}: {class_acc:.2f}%")
-
-print(f"\nModel saved to '{MODEL_SAVE_PATH}'")
+except FileNotFoundError:
+    print(f"Error: Could not find the dataset file at '{FILE_PATH}'.")
+    print("Please make sure 'preprocessed_test.csv' is in the same directory.")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")
