@@ -1,37 +1,34 @@
 import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 import pickle
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 import warnings
 
-# Suppress warnings from sklearn
+# Suppress warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 
-# --- 1. Configuration ---\
-# --- Paths ---\
-# Input files required for this script
+# --- 1. Configuration ---
 MUSIC_DATA_PATH = 'cleaned_music_sentiment_dataset.csv'
 
-# --- Output Files ---\
-# These are the final files the backend_app.py will use
-OUTPUT_CSV_PATH = 'new_dataset_with_emotions.csv'
-OUTPUT_SIMILARITY_MATRIX_PATH = 'new_dataset_similarity_matrix.npy'
-OUTPUT_INDICES_PATH = 'new_dataset_song_indices.pkl'
-OUTPUT_PLOT_PATH = 'new_dataset_emotion_distribution.png'
+# Output files for the backend
+OUTPUT_CSV_PATH = 'new_dataset_for_rec.csv'
+OUTPUT_SIMILARITY_MATRIX_PATH = 'new_dataset_similarity_matrix_tags.npy'
+OUTPUT_INDICES_PATH = 'new_dataset_song_indices_tags.pkl'
+OUTPUT_PREPROCESSOR_PATH = 'tag_preprocessor.pkl' # To process tags
 
-# --- 2. Main Execution Block ---\
+# --- 2. Main Execution Block ---
 if __name__ == '__main__':
-    # --- Phase 1: Load and Prepare New Music Data ---\
     print("\n--- Phase 1: Loading and Preparing Music Data ---")
     df_music = pd.read_csv(MUSIC_DATA_PATH)
     
-    # Drop rows where key music/emotion data is missing
-    key_cols = ['User_Text', 'Sentiment_Label', 'Song_Name', 'Artist', 
-                'Genre', 'Tempo (BPM)', 'Mood', 'Energy', 'Danceability']
+    # Define all "tags" as per the PDF
+    tag_cols = ['Sentiment_Label', 'Genre', 'Mood', 'Energy', 'Danceability']
+    numerical_cols = ['Tempo (BPM)']
+    key_cols = ['Song_Name', 'Artist'] + tag_cols + numerical_cols
+    
+    # Drop rows where any key data is missing
     df_music.dropna(subset=key_cols, inplace=True)
     
     # Ensure there are no duplicate songs
@@ -39,88 +36,64 @@ if __name__ == '__main__':
     df_music.reset_index(drop=True, inplace=True)
 
     print(f"Loaded and filtered dataset with {len(df_music)} unique songs.")
-
-    # --- Phase 2: Map Emotion Labels ---
-    print("\n--- Phase 2: Mapping Emotion Labels ---")
-    # This map is useful for encoding the label, but the string label is also needed
-    emotion_map = {'Sad': 0, 'Happy': 1, 'Relaxed': 2, 'Motivated': 3, 'Calm': 4}
     
-    # We rename 'predicted_emotion' to 'emotion_label_encoded' for clarity.
-    # This is an ENCODING of the *existing label*, not a *prediction*.
-    df_music['emotion_label_encoded'] = df_music['Sentiment_Label'].map(emotion_map)
-    
-    # Save this cleaned-up and encoded dataset
+    # Save this clean, unique list of songs for the backend
     df_music.to_csv(OUTPUT_CSV_PATH, index=False)
-    print(f"Saved cleaned dataset with encoded labels to '{OUTPUT_CSV_PATH}'")
+    print(f"Saved clean song list to '{OUTPUT_CSV_PATH}'")
 
-    # --- Phase 3: Visualize Emotion Distribution ---
-    print("\n--- Phase 3: Visualizing Emotion Distribution ---")
-    plt.figure(figsize=(10, 6))
-    df_music['Sentiment_Label'].value_counts().plot(kind='bar', color='green')
-    plt.title('Emotion Distribution from Dataset Labels')
-    plt.xlabel('Emotion (from Sentiment_Label)')
-    plt.ylabel('Number of Songs')
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig(OUTPUT_PLOT_PATH)
-    print(f"Saved emotion distribution plot to '{OUTPUT_PLOT_PATH}'")
-
-    # --- Phase 4: Build Content-Based Recommendation Engine ---
-    print("\n--- Phase 4: Building Content-Based Recommendation Engine ---")
-    print("This is the new, improved method.")
-
-    # 1. Process Numerical Features
-    print("Processing numerical and ordinal features...")
-    scaler = MinMaxScaler()
-    numerical_features = pd.DataFrame(
-        scaler.fit_transform(df_music[['Tempo (BPM)']]), 
-        columns=['Tempo_Scaled']
-    )
+    # --- Phase 2: Build Feature Matrix from TAGS ---
+    print("\n--- Phase 2: Building Feature Matrix from TAGS ---")
     
-    # 2. Process Ordinal Features (Low, Medium, High)
-    ordinal_map = {'Low': 0, 'Medium': 1, 'High': 2}
-    ordinal_features = pd.DataFrame({
-        'Energy_Scaled': df_music['Energy'].map(ordinal_map).fillna(1), # Fill NaNs with 'Medium'
-        'Danceability_Scaled': df_music['Danceability'].map(ordinal_map).fillna(1)
-    })
-    # Scale ordinal features as well
-    ordinal_features = pd.DataFrame(
-        scaler.fit_transform(ordinal_features),
-        columns=ordinal_features.columns
-    )
+    # Define categorical and numerical features
+    categorical_features = ['Sentiment_Label', 'Genre', 'Mood', 'Energy', 'Danceability']
+    numerical_features = ['Tempo (BPM)']
 
-    # 3. Process Categorical Features (One-Hot Encoding)
-    print("Processing categorical features (Genre, Mood, Sentiment)...")
-    genre_features = pd.get_dummies(df_music['Genre'], prefix='genre')
-    mood_features = pd.get_dummies(df_music['Mood'], prefix='mood')
-    sentiment_features = pd.get_dummies(df_music['Sentiment_Label'], prefix='sentiment')
+    # Create a pre-processing pipeline
+    # 1. Numerical: Scale 'Tempo (BPM)' to be between 0 and 1
+    numerical_transformer = MinMaxScaler()
+    
+    # 2. Categorical: Convert all text tags into binary (0/1) columns
+    categorical_transformer = OneHotEncoder(handle_unknown='ignore')
+    
+    # Combine transformers
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numerical_transformer, numerical_features),
+            ('cat', categorical_transformer, categorical_features)
+        ])
 
-    # 4. Combine all features into one matrix
-    print("Combining all features into final matrix...")
-    features_df = pd.concat([
-        numerical_features,
-        ordinal_features,
-        genre_features,
-        mood_features,
-        sentiment_features
-    ], axis=1)
+    # 3. Fit and transform the data
+    print("Fitting preprocessor and transforming tags into a feature matrix...")
+    feature_matrix = preprocessor.fit_transform(df_music)
+    
+    print(f"Created feature matrix with shape: {feature_matrix.shape}")
 
-    print(f"Created feature matrix with shape: {features_df.shape}")
-
-    # 5. Calculate Cosine Similarity
-    # This matrix is built from *music features*, not User_Text
-    print("Calculating cosine similarity matrix based on content features...")
-    cosine_sim = cosine_similarity(features_df, features_df)
+    # --- Phase 3: Calculate and Save Similarity Matrix ---
+    print("\n--- Phase 3: Calculating and Saving Similarity Matrix ---")
+    print("Calculating cosine similarity matrix based on content features (TAGS)...")
+    
+    # We use .toarray() if the matrix is sparse, which OneHotEncoder produces
+    if hasattr(feature_matrix, "toarray"):
+        feature_matrix_dense = feature_matrix.toarray()
+    else:
+        feature_matrix_dense = feature_matrix
+        
+    cosine_sim = cosine_similarity(feature_matrix_dense, feature_matrix_dense)
     
     # 6. Save the similarity matrix
     np.save(OUTPUT_SIMILARITY_MATRIX_PATH, cosine_sim)
     print(f"Saved new similarity matrix to '{OUTPUT_SIMILARITY_MATRIX_PATH}'")
     
-    # 7. Create and save the series for song title-to-index mapping (this is the same)
+    # 7. Create and save the series for song title-to-index mapping
     indices = pd.Series(df_music.index, index=df_music['Song_Name']).drop_duplicates()
     with open(OUTPUT_INDICES_PATH, 'wb') as f:
         pickle.dump(indices, f)
     print(f"Saved song indices to '{OUTPUT_INDICES_PATH}'")
     
-    print("\n--- All processing complete! ---")
-    print("The new files are now ready for your backend application.")
+    # 8. Save the preprocessor itself for later use (if needed)
+    with open(OUTPUT_PREPROCESSOR_PATH, 'wb') as f:
+        pickle.dump(preprocessor, f)
+    print(f"Saved tag preprocessor to '{OUTPUT_PREPROCESSOR_PATH}'")
+    
+    print("\n--- Pre-computation based on TAGS is complete! ---")
+
