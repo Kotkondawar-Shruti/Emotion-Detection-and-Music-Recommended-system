@@ -130,3 +130,44 @@ Emotion Prediction
 The processed text is converted into numerical sequences using a tokenizer and padded to a fixed maximum length before being passed to the trained emotion classification model.
 
 ---
+
+## Supported Emotions
+
+The system supports the following emotion categories:
+
+- Joy
+- Love
+- Surprise
+- Sadness
+- Anger
+- Neutral
+
+---
+
+## Music Recommendation Logic
+
+After predicting the user's emotion, the system filters songs based on audio features.
+
+### Joy, Love and Surprise
+
+For positive emotions, songs with higher valence and energy are recommended.
+
+Valence > 0.6
+
+Energy > 0.6
+
+### Sadness and Anger
+
+For sadness and anger, songs with lower valence are selected.
+
+Valence < 0.4
+
+### Other Emotions
+
+For other emotional states, songs with moderate valence are selected.
+
+0.4 <= Valence <= 0.6
+
+The system then selects up to five songs from the filtered results and displays the song name, artist, and available audio preview.
+
+---
