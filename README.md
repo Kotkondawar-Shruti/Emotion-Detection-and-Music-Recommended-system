@@ -171,3 +171,16 @@ For other emotional states, songs with moderate valence are selected.
 The system then selects up to five songs from the filtered results and displays the song name, artist, and available audio preview.
 
 ---
+
+## Technologies Used
+
+| Category | Technologies |
+|---|---|
+| Programming Language | Python |
+| Machine Learning | TensorFlow, Keras |
+| Natural Language Processing | NLTK |
+| Data Processing | Pandas, NumPy |
+| Machine Learning Utilities | Scikit-learn |
+| Web Application Framework | Streamlit |
+| Data Storage Format | CSV |
+| Model Storage Format | HDF5 (`.h5`) |
