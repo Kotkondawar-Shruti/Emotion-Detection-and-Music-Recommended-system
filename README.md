@@ -86,15 +86,17 @@ The system then selects up to five songs from the filtered results and displays 
 
 ---
 
+```markdown
 ## Project Structure
 
+```text
 Emotion-Detection-and-Music-Recommendation-System/
-|
-|-- app.py
-|-- Music_Recommendation_System_Source_code.ipynb
-|-- OVERSAMPLING.ipynb
-|-- README.md
-
+│
+├── app.py
+├── Music_Recommendation_System_Source_code.ipynb
+├── OVERSAMPLING.ipynb
+└── README.md
+```markdown
 ---
 
 ## File Description
