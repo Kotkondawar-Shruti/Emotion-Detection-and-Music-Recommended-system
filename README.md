@@ -137,7 +137,8 @@ source venv/bin/activate
 Install the required dependencies:
 
 pip install streamlit pandas numpy nltk tensorflow scikit-learn
-Running the Application
+---
+##Running the Application
 
 Start the Streamlit application using:
 
