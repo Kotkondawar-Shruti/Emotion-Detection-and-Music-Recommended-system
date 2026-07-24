@@ -21,21 +21,13 @@ The system follows a two-stage process:
 
 ## Features
 
-- Emotion detection from user-provided text
-- Natural Language Processing-based text preprocessing
-- Lowercase conversion
-- URL removal
-- User mention removal
-- Special character removal
-- Stopword removal
-- Porter Stemming
-- Text tokenization and sequence padding
-- Machine learning-based emotion classification
-- Emotion-based music recommendation
-- Audio feature-based song filtering
-- Up to five song recommendations
-- Spotify audio preview support where available
-- Interactive Streamlit web application
+- Detects emotions from user-provided text using NLP and machine learning.
+- Performs text preprocessing, including tokenization, stopword removal, and stemming.
+- Recommends music based on the predicted emotion.
+- Filters songs using audio features such as valence and energy.
+- Provides up to five personalized song recommendations.
+- Supports available Spotify audio previews.
+- Provides an interactive Streamlit web interface.
 
 ---
 
@@ -181,6 +173,61 @@ The system then selects up to five songs from the filtered results and displays 
 | Natural Language Processing | NLTK |
 | Data Processing | Pandas, NumPy |
 | Machine Learning Utilities | Scikit-learn |
-| Web Application Framework | Streamlit |
 | Data Storage Format | CSV |
-| Model Storage Format | HDF5 (`.h5`) |
+| Web Application Framework | Streamlit |
+
+---
+
+## Project Structure
+
+Emotion-Detection-and-Music-Recommendation-System/
+|
+|-- app.py
+|-- Music_Recommendation_System_Source_code.ipynb
+|-- OVERSAMPLING.ipynb
+|-- README.md
+
+---
+
+## File Description
+
+| File | Description |
+|---|---|
+| `app.py` | Main Streamlit application that accepts user text, predicts the emotion, and recommends music based on the predicted emotion. |
+| `Music_Recommendation_System_Source_code.ipynb` | Main Jupyter Notebook containing the development and implementation of the music recommendation system. |
+| `OVERSAMPLING.ipynb` | Jupyter Notebook used for handling class imbalance through oversampling during the emotion classification process. |
+| `README.md` | Documentation containing the project overview, features, technologies used, setup instructions, and usage details. |
+
+---
+
+Installation and Setup
+1. Clone the Repository
+git clone https://github.com/Kotkondawar-Shruti/Emotion-Detection-and-Music-Recommended-system.git
+
+Navigate to the project directory:
+
+cd Emotion-Detection-and-Music-Recommended-system
+2. Create a Virtual Environment
+
+Creating a virtual environment is recommended to keep project dependencies isolated.
+
+Windows
+python -m venv venv
+venv\Scripts\activate
+macOS/Linux
+python3 -m venv venv
+source venv/bin/activate
+3. Install Required Libraries
+
+Install the required dependencies:
+
+pip install streamlit pandas numpy nltk tensorflow scikit-learn
+Running the Application
+
+Start the Streamlit application using:
+
+streamlit run app.py
+
+The application will be available at:
+
+http://localhost:8501
