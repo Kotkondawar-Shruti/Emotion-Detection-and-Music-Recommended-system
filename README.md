@@ -71,6 +71,42 @@ Recommended Songs
         v
 Audio Preview
 
+Machine Learning Pipeline
+
+The input text passes through the following preprocessing steps:
+
+Raw Text
+    |
+    v
+Convert to Lowercase
+    |
+    v
+Remove URLs
+    |
+    v
+Remove User Mentions
+    |
+    v
+Remove Special Characters
+    |
+    v
+Remove Extra Spaces
+    |
+    v
+Remove Stopwords
+    |
+    v
+Porter Stemming
+    |
+    v
+Tokenization
+    |
+    v
+Sequence Padding
+    |
+    v
+Emotion Prediction
+
 The processed text is converted into numerical sequences using a tokenizer and padded to a fixed maximum length before being passed to the trained emotion classification model.
 
 Supported Emotions
