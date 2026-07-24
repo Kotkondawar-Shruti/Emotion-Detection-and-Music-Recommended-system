@@ -108,3 +108,15 @@ Emotion-Detection-and-Music-Recommendation-System/
 | `Music_Recommendation_System_Source_code.ipynb` | Main Jupyter Notebook containing the development and implementation of the music recommendation system. |
 | `OVERSAMPLING.ipynb` | Jupyter Notebook used for handling class imbalance through oversampling during the emotion classification process. |
 | `README.md` | Documentation containing the project overview, features, technologies used, setup instructions, and usage details. |
+
+---
+
+###Installation and Setup
+
+##1. Clone the Repository
+
+git clone https://github.com/Kotkondawar-Shruti/Emotion-Detection-and-Music-Recommendation-System.git
+
+Navigate to the project directory:
+
+cd Emotion-Detection-and-Music-Recommendation-System
