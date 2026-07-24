@@ -121,4 +121,23 @@ git clone https://github.com/Kotkondawar-Shruti/Emotion-Detection-and-Music-Reco
 
 Navigate to the project directory:
 
+```bash
 cd Emotion-Detection-and-Music-Recommendation-System
+```
+
+---
+
+##2. Create a Virtual Environment
+
+Creating a virtual environment is recommended to keep project dependencies isolated.
+
+Windows
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+macOS/Linux
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
