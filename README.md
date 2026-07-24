@@ -141,3 +141,21 @@ macOS/Linux
 python3 -m venv venv
 source venv/bin/activate
 ```
+
+---
+
+##3. Install Required Libraries
+
+Install the required dependencies:
+```bash
+pip install streamlit pandas numpy nltk tensorflow scikit-learn
+```
+Running the Application
+
+Start the Streamlit application using:
+```bash
+streamlit run app.py
+```
+The application will be available at:
+
+http://localhost:8501
