@@ -111,11 +111,13 @@ Emotion-Detection-and-Music-Recommendation-System/
 
 ---
 
-###Installation and Setup
+##Installation and Setup
 
-##1. Clone the Repository
+###1. Clone the Repository
 
+```bash
 git clone https://github.com/Kotkondawar-Shruti/Emotion-Detection-and-Music-Recommendation-System.git
+```
 
 Navigate to the project directory:
 
