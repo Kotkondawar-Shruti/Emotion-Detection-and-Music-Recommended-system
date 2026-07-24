@@ -81,3 +81,52 @@ Audio Preview
 
 ---
 
+## Machine Learning Pipeline
+
+The input text passes through the following preprocessing steps:
+
+Raw Text
+
+↓
+
+Convert to Lowercase
+
+↓
+
+Remove URLs
+
+↓
+
+Remove User Mentions
+
+↓
+
+Remove Special Characters
+
+↓
+
+Remove Extra Spaces
+
+↓
+
+Remove Stopwords
+
+↓
+
+Porter Stemming
+
+↓
+
+Tokenization
+
+↓
+
+Sequence Padding
+
+↓
+
+Emotion Prediction
+
+The processed text is converted into numerical sequences using a tokenizer and padded to a fixed maximum length before being passed to the trained emotion classification model.
+
+---
